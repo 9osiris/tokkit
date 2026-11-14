@@ -1,0 +1,44 @@
+the agent reads the prompt and decides what to do next. the agent reads
+the prompt and calls a tool. the tool returns a result and the agent reads
+the result and decides what to do next. that is the whole loop. the loop
+runs until the task is done or the agent runs out of steps.
+
+memory is the other half. the agent keeps a working memory of the last
+few turns, an episodic memory of what happened before, and a semantic
+memory of facts it has learned. when the agent sees something new it
+writes an episode. when it sleeps it replays the episodes and keeps the
+ones that matter. the ones that matter get linked together into a story.
+
+tokens are the unit the model thinks in. text becomes tokens before the
+model sees it, and tokens become text again when the model answers. a
+tokenizer decides where the cuts go. common words get one token, rare
+words get split into pieces. the model never sees raw text, only tokens.
+
+the router picks which model answers. easy prompts go to the fast model,
+hard prompts go to the smart model. the router learns from the log: if
+the fast model keeps failing on a kind of prompt, the router sends that
+kind to the smart model next time. routing is a guess, and the log makes
+the guess better.
+
+the cache sits in front of the model. when the same prompt comes in
+twice, the cache answers from disk instead of paying for the model
+again. near duplicates count too, if the embeddings are close enough.
+the cache saves money and time, and it never changes the answer.
+
+a world model is a map in the agent's head. the agent plans in the map
+and acts in the real world. when the world surprises the agent, the
+agent fixes the map. planning in a wrong map still works if the agent
+keeps correcting the map after every surprise. that is how the agent
+learns the world without touching it first.
+
+eval harnesses keep everyone honest. a single reply is easy to score,
+a whole run is harder. the harness reads the trace, checks the steps,
+checks the tools, checks the final answer, and gives a number. if the
+number drops, something broke. the number is the only thing that
+matters in the end.
+
+the café on the corner serves a naïve blend of coffee and the menu
+says the beans come from a small farm. the agent does not drink coffee
+but the café is a good place to test the tokenizer, because the words
+on the menu are not all plain ascii. the tokenizer has to handle them
+anyway, byte by byte, without losing a single one.
