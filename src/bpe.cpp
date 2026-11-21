@@ -27,6 +27,11 @@ void Bpe::rebuild() {
     id_to_token_.push_back(tok);
     merge_rank_[merges_[i]] = (int)i;
   }
+  // specials go after the regular vocab, one id each, never merged
+  for (size_t i = 0; i < specials_.size(); i++) {
+    token_to_id_[specials_[i]] = 256 + (int)merges_.size() + (int)i;
+    id_to_token_.push_back(specials_[i]);
+  }
 }
 
 void Bpe::train(const std::string& text, int vocab_size) {
@@ -80,6 +85,30 @@ void Bpe::train(const std::string& text, int vocab_size) {
   rebuild();
 }
 
+// specials are atomic: encode never splits them, train never merges them
+void Bpe::add_specials(const std::vector<std::string>& toks) {
+  for (const std::string& t : toks) {
+    if (t.empty()) throw std::runtime_error("special token is empty");
+    // every char must roundtrip through the byte alphabet (space cant)
+    for (int cp : utf8_decode(t))
+      if (cp_to_byte(cp) < 0)
+        throw std::runtime_error("special token has a char with no byte mapping: " + t);
+    if (token_to_id_.count(t))
+      throw std::runtime_error("special token collides with vocab: " + t);
+    for (const std::string& s : specials_)
+      if (s == t) throw std::runtime_error("duplicate special token: " + t);
+    specials_.push_back(t);
+  }
+  rebuild();
+}
+
+int Bpe::special_count() const { return (int)specials_.size(); }
+
+std::string Bpe::special_string(int i) const {
+  if (i < 0 || i >= (int)specials_.size()) return "";
+  return specials_[i];
+}
+
 std::vector<int> Bpe::encode_piece(const std::string& piece) const {
   auto hit = cache_.find(piece);
   if (hit != cache_.end()) return hit->second;
@@ -118,9 +147,35 @@ std::vector<int> Bpe::encode_piece(const std::string& piece) const {
 
 std::vector<int> Bpe::encode(const std::string& text) const {
   std::vector<int> out;
-  for (const std::string& piece : pretokenize(text)) {
-    std::vector<int> ids = encode_piece(piece);
-    out.insert(out.end(), ids.begin(), ids.end());
+  size_t pos = 0;
+  while (pos < text.size()) {
+    // longest special token starting here wins, so overlapping ones behave
+    size_t best_len = 0;
+    int best_id = -1;
+    for (size_t s = 0; s < specials_.size(); s++) {
+      const std::string& t = specials_[s];
+      if (t.size() > best_len && text.compare(pos, t.size(), t) == 0) {
+        best_len = t.size();
+        best_id = 256 + merge_count() + (int)s;
+      }
+    }
+    if (best_id >= 0) {
+      out.push_back(best_id);
+      pos += best_len;
+      continue;
+    }
+    // no special here, run to the next one and bpe the gap
+    size_t next = text.size();
+    for (size_t s = 0; s < specials_.size(); s++) {
+      size_t at = text.find(specials_[s], pos);
+      if (at != std::string::npos && at < next) next = at;
+    }
+    std::string gap = text.substr(pos, next - pos);
+    for (const std::string& piece : pretokenize(gap)) {
+      std::vector<int> ids = encode_piece(piece);
+      out.insert(out.end(), ids.begin(), ids.end());
+    }
+    pos = next;
   }
   return out;
 }
@@ -152,6 +207,11 @@ bool Bpe::save(const std::string& dir) const {
   if (!vocab) return false;
   for (size_t i = 0; i < id_to_token_.size(); i++)
     vocab << i << "\t" << id_to_token_[i] << "\n";
+  if (!specials_.empty()) {
+    std::ofstream specials(dir + "/specials.txt");
+    if (!specials) return false;
+    for (auto& s : specials_) specials << s << "\n";
+  }
   return true;
 }
 
@@ -168,6 +228,19 @@ bool Bpe::load(const std::string& merges_path) {
     merges_.push_back({line.substr(0, sp), line.substr(sp + 1)});
   }
   rebuild();
+  // specials live next to the merges file, one per line, optional
+  size_t slash = merges_path.find_last_of("/\\");
+  std::string dir = slash == std::string::npos ? "." : merges_path.substr(0, slash);
+  std::ifstream spec(dir + "/specials.txt");
+  if (spec) {
+    std::vector<std::string> toks;
+    std::string sline;
+    while (std::getline(spec, sline)) {
+      if (!sline.empty() && sline.back() == '\r') sline.pop_back();
+      if (!sline.empty()) toks.push_back(sline);
+    }
+    if (!toks.empty()) add_specials(toks);
+  }
   return true;
 }
 
