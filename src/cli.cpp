@@ -7,7 +7,7 @@
 
 #include "bpe.h"
 
-#define VERSION "1.0.0"
+#define VERSION "1.1.0"
 
 // read a whole file into a string, empty on failure
 static std::string read_file(const std::string& path) {
@@ -27,7 +27,7 @@ static std::string read_stdin() {
 static void usage() {
   std::cout << "tokkit " << VERSION << " - byte level bpe tokenizer\n"
             << "usage:\n"
-            << "  tokkit train --corpus FILE --vocab-size N --out DIR\n"
+            << "  tokkit train --corpus FILE --vocab-size N --out DIR [--specials \"a,b\"]\n"
             << "  tokkit encode --merges FILE [--text TEXT | --file FILE] [--ids]\n"
             << "  tokkit decode --merges FILE --ids \"12 34\" | --file FILE\n"
             << "  tokkit info --merges FILE\n"
@@ -81,12 +81,28 @@ int main(int argc, char** argv) {
       }
       Bpe bpe;
       bpe.train(text, std::stoi(vs));
+      std::string sp = flag(argc, argv, "--specials");
+      if (!sp.empty()) {
+        std::vector<std::string> toks;
+        std::stringstream ss(sp);
+        std::string tok;
+        while (std::getline(ss, tok, ',')) {
+          if (!tok.empty()) toks.push_back(tok);
+        }
+        bpe.add_specials(toks);
+      }
       if (!bpe.save(out)) {
         std::cerr << "cannot write to: " << out << "\n";
         return 1;
       }
       std::cout << "trained " << bpe.merge_count() << " merges, vocab size "
                 << bpe.vocab_size() << "\n";
+      if (bpe.special_count() > 0) {
+        std::cout << "specials:";
+        for (int i = 0; i < bpe.special_count(); i++)
+          std::cout << " " << bpe.special_string(i);
+        std::cout << "\n";
+      }
       std::cout << "wrote " << out << "/merges.txt and " << out << "/vocab.txt\n";
       return 0;
     }
@@ -104,6 +120,10 @@ int main(int argc, char** argv) {
       if (cmd == "info") {
         std::cout << "vocab size: " << bpe.vocab_size() << "\n";
         std::cout << "merges: " << bpe.merge_count() << "\n";
+        std::cout << "specials: " << bpe.special_count() << "\n";
+        for (int i = 0; i < bpe.special_count(); i++)
+          std::cout << "  " << bpe.special_string(i) << " ("
+                    << 256 + bpe.merge_count() + i << ")\n";
         std::cout << "first merges:\n";
         for (int i = 0; i < 10 && i < bpe.merge_count(); i++)
           std::cout << "  " << bpe.token_string(256 + i) << "\n";
