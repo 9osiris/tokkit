@@ -105,6 +105,66 @@ def main():
         r = run([BIN, "encode", "--merges", os.path.join(tmp, "nope.txt"), "--text", "hi"])
         check("missing merges fails cleanly", r.returncode != 0)
 
+        # special tokens: atomic ids after the regular vocab
+        spdir = os.path.join(tmp, "special")
+        r = run([BIN, "train", "--corpus", CORPUS, "--vocab-size", "400",
+                 "--out", spdir, "--specials", "<|endoftext|>,<|fim_prefix|>"])
+        check("train with specials exits 0", r.returncode == 0)
+        spfile = os.path.join(spdir, "specials.txt")
+        check("specials.txt exists",
+              os.path.exists(spfile) and
+              open(spfile).read().splitlines() == ["<|endoftext|>", "<|fim_prefix|>"])
+        spmerges = os.path.join(spdir, "merges.txt")
+        nmerges = len(open(spmerges).read().splitlines())
+        spvocab = open(os.path.join(spdir, "vocab.txt")).read().splitlines()
+        check("vocab grows by the specials", len(spvocab) == 256 + nmerges + 2)
+        eot = 256 + nmerges
+        r = run([BIN, "encode", "--merges", spmerges, "--text",
+                 "the agent<|endoftext|>reads", "--ids"])
+        check("special token encodes to its own id",
+              r.returncode == 0 and str(eot) in r.stdout.split())
+        check("special id is used exactly once",
+              r.stdout.split().count(str(eot)) == 1)
+        ids = r.stdout.strip()
+        r2 = run([BIN, "decode", "--merges", spmerges, "--ids", ids])
+        check("roundtrip with specials",
+              r2.returncode == 0 and r2.stdout == "the agent<|endoftext|>reads")
+        r = run([BIN, "encode", "--merges", spmerges, "--text",
+                 "<|endoftext|>the agent<|fim_prefix|>", "--ids"])
+        check("specials at the edges encode",
+              r.returncode == 0 and str(eot) in r.stdout.split() and
+              str(eot + 1) in r.stdout.split())
+        r2 = run([BIN, "decode", "--merges", spmerges, "--ids", r.stdout.strip()])
+        check("roundtrip with specials at the edges",
+              r2.returncode == 0 and r2.stdout == "<|endoftext|>the agent<|fim_prefix|>")
+        r = run([BIN, "encode", "--merges", spmerges, "--text",
+                 "endoftext is just a word here", "--ids"])
+        check("bare text never becomes a special",
+              r.returncode == 0 and str(eot) not in r.stdout.split())
+        r = run([BIN, "decode", "--merges", spmerges, "--ids", str(eot)])
+        check("decoding a special id gives its text",
+              r.returncode == 0 and r.stdout == "<|endoftext|>")
+        r = run([BIN, "info", "--merges", spmerges])
+        check("info lists specials",
+              r.returncode == 0 and "specials: 2" in r.stdout and
+              "<|endoftext|>" in r.stdout)
+        tiny_merges = os.path.join(ROOT, "examples", "tiny", "merges.txt")
+        r = run([BIN, "encode", "--merges", tiny_merges, "--text",
+                 "the<|endoftext|>agent", "--ids"])
+        check("shipped tiny vocab has endoftext",
+              r.returncode == 0 and "320" in r.stdout.split())
+        r2 = run([BIN, "decode", "--merges", tiny_merges, "--ids", r.stdout.strip()])
+        check("tiny vocab roundtrips a special",
+              r2.returncode == 0 and r2.stdout == "the<|endoftext|>agent")
+        r = run([BIN, "train", "--corpus", CORPUS, "--vocab-size", "400",
+                 "--out", os.path.join(tmp, "dup"),
+                 "--specials", "<|endoftext|>,<|endoftext|>"])
+        check("duplicate special fails", r.returncode != 0)
+        r = run([BIN, "train", "--corpus", CORPUS, "--vocab-size", "400",
+                 "--out", os.path.join(tmp, "sp"),
+                 "--specials", "has a space"])
+        check("special with a space fails", r.returncode != 0)
+
         # bench runs and reports timing
         r = run([BIN, "bench", "--merges", merges, "--text", samples[0], "--n", "20"])
         check("bench prints tok/s", r.returncode == 0 and "tok/s" in r.stdout)
