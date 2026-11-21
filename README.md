@@ -3,9 +3,9 @@ tokkit - byte level bpe tokenizer in c++ [educational project]
 disclaimer:
 this is a learning project, not a production tokenizer. it trains real
 byte level bpe and roundtrips text exactly, but the pre-tokenizer is a
-hand rolled scanner, training is single threaded, and there are no
-special tokens. use it to understand how tokenizers work, not to ship
-one.
+hand rolled scanner, training is single threaded, and special tokens
+have to be plain printable text (no spaces). use it to understand how
+tokenizers work, not to ship one.
 
 why i made this
 i keep building stuff around models (mule, probe, kvblocks) and every
@@ -27,6 +27,9 @@ build it:
 train a vocab on the sample corpus:
   ./tokkit train --corpus examples/corpus.txt --vocab-size 400 --out /tmp/vocab
 
+train with special tokens (atomic, never split or merged):
+  ./tokkit train --corpus examples/corpus.txt --vocab-size 400 --out /tmp/vocab --specials "<|endoftext|>,<|fim_prefix|>"
+
 encode some text (token text by default, --ids for numbers):
   ./tokkit encode --merges /tmp/vocab/merges.txt --text "the agent reads the prompt"
   ./tokkit encode --merges /tmp/vocab/merges.txt --text "the agent reads the prompt" --ids
@@ -44,8 +47,20 @@ examples/tiny if you want to try encode without training first.
 
 run the tests:
   make test
-  33 checks, builds the binary and runs it end to end. no api key, no
+  48 checks, builds the binary and runs it end to end. no api key, no
   network, no dependencies beyond g++ and python3.
+
+special tokens
+  --specials takes a comma separated list at train time. each one gets
+  an id after the regular vocab (256 + merges + index) and is written
+  to specials.txt next to merges.txt, so encode and decode pick them
+  up automatically when they load the merges file. encode splits text
+  on the special strings first, longest match wins, so "<|endoftext|>"
+  always becomes one token no matter what is around it, and the gaps
+  in between go through normal bpe. decode prints the literal text
+  back. specials have to be made of characters that roundtrip through
+  the byte alphabet, which means no spaces. the shipped tiny vocab
+  already has <|endoftext|> at id 320.
 
 how it works
   src/bytes.cpp - utf8 helpers and the gpt2 byte alphabet (bytes 0-255
@@ -55,9 +70,11 @@ how it works
   src/bpe.cpp - train counts adjacent pairs and merges the most
     frequent one until the vocab size is hit (pairs seen once are
     skipped, they buy nothing), encode applies merges lowest rank
-    first, decode joins tokens back to bytes
+    first, decode joins tokens back to bytes. special tokens are
+    matched before any of that and get ids after the merges
   src/cli.cpp - train, encode, decode, info, bench
 
 merges.txt is one merge per line ("left right" in encoder chars) and
 vocab.txt is "id <tab> token". vocab is the 256 byte tokens first,
-then merges in order, so ids are stable for a given merges file.
+then merges in order, then special tokens, so ids are stable for a
+given merges file. specials.txt is one special token per line.
